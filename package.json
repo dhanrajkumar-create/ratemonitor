@@ -1,0 +1,8 @@
+{
+  "devDependencies": {
+    "gh-pages": "^6.3.0"
+  },
+  "dependencies": {
+    "playwright": "^1.61.1"
+  }
+}

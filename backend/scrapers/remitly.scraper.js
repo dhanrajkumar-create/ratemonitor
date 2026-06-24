@@ -1,0 +1,113 @@
+import { chromium } from 'playwright';
+
+export async function scrapeRemitly(fromCur, toCur) {
+  // Remitly currency converter URL pattern: /ca/en/currency-converter/cad-to-inr-rate
+  const url = `https://www.remitly.com/ca/en/currency-converter/${fromCur.toLowerCase()}-to-${toCur.toLowerCase()}-rate`;
+  let browser;
+  let capturedRate = null;
+
+  try {
+    browser = await chromium.launch({
+      headless: true,
+      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-blink-features=AutomationControlled'],
+    });
+    const context = await browser.newContext({
+      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      viewport: { width: 1280, height: 720 },
+    });
+    const page = await context.newPage();
+
+    // Capture JSON API responses containing exchange rate data
+    page.on('response', async (response) => {
+      const ct = response.headers()['content-type'] || '';
+      if (!ct.includes('json')) return;
+      try {
+        const body = await response.json();
+        const rate = extractRateFromJSON(body, fromCur, toCur);
+        if (rate) capturedRate = rate;
+      } catch {}
+    });
+
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    await page.waitForTimeout(5000);
+
+    if (capturedRate) {
+      return { rate: capturedRate, fee: 0, currencyPair: `${fromCur}/${toCur}`, sourceUrl: url };
+    }
+
+    const text = await page.locator('body').innerText();
+    const rate = parseRateFromText(text, fromCur, toCur);
+    if (rate) return { rate, fee: 0, currencyPair: `${fromCur}/${toCur}`, sourceUrl: url };
+
+  } catch (err) {
+    console.error('Remitly scraper error:', err.message);
+  } finally {
+    if (browser) await browser.close();
+  }
+
+  return fallbackFromER(fromCur, toCur, 0.997);
+}
+
+function isValidRate(n) {
+  return !isNaN(n) && n > 0.000001 && n < 1_000_000;
+}
+
+function extractRateFromJSON(body, fromCur, toCur) {
+  if (!body || typeof body !== 'object') return null;
+  const candidates = [
+    body.exchange_rate, body.exchangeRate,
+    body.data?.exchange_rate, body.data?.exchangeRate,
+    body.pricing?.exchange_rate, body.pricing?.exchangeRate,
+    body.result?.exchange_rate,
+  ];
+  for (const v of candidates) {
+    const n = parseFloat(v);
+    if (isValidRate(n)) return n;
+  }
+  if (Array.isArray(body.rates)) {
+    const r = body.rates.find(r =>
+      r.currency === toCur || r.destCurrency === toCur || r.currency_code === toCur
+    );
+    if (r) {
+      const n = parseFloat(r.rate || r.exchange_rate || r.exchangeRate);
+      if (isValidRate(n)) return n;
+    }
+  }
+  return null;
+}
+
+function parseRateFromText(text, fromCur, toCur) {
+  const patterns = [
+    // "1 CAD = 43.50 PHP"
+    new RegExp(`1\\s*${fromCur}\\s*=\\s*([0-9][0-9.,]*)\\s*${toCur}`, 'i'),
+    // "43.50 PHP = 1 CAD"
+    new RegExp(`([0-9][0-9.,]*)\\s*${toCur}\\s*=\\s*1\\s*${fromCur}`, 'i'),
+    // "43.50 PHP to 1 CAD"
+    new RegExp(`([0-9][0-9.,]*)\\s*${toCur}\\s*to\\s*1\\s*${fromCur}`, 'i'),
+    // "43.50 PHP per CAD"
+    new RegExp(`([0-9][0-9.,]*)\\s*${toCur}\\s*per\\s*(?:1\\s*)?${fromCur}`, 'i'),
+    // "Exchange rate: 43.50" or "Today's rate: 43.50"
+    new RegExp(`(?:Exchange|Today['s]*)\\s*[Rr]ate[:\\s]+([0-9][0-9.,]*)`, 'i'),
+  ];
+  for (const p of patterns) {
+    const m = text.match(p);
+    if (m) {
+      const n = Number(m[1].replace(/,/g, ''));
+      if (n > 0) return n;
+    }
+  }
+  return null;
+}
+
+async function fallbackFromER(fromCur, toCur, multiplier = 0.997) {
+  try {
+    const res = await fetch(`https://open.er-api.com/v6/latest/${fromCur}`);
+    if (!res.ok) return null;
+    const data = await res.json();
+    const base = data.rates[toCur];
+    if (!base) return null;
+    return { rate: base * multiplier, fee: 0, currencyPair: `${fromCur}/${toCur}`, sourceUrl: 'er-api-fallback' };
+  } catch {
+    return null;
+  }
+}
