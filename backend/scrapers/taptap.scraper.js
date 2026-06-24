@@ -1,6 +1,5 @@
-import { chromium } from 'playwright';
+// No top-level playwright import — dynamic import only, so Netlify can bundle this file
 
-// TapTap Send destination country slugs used in their URL paths
 const COUNTRY_SLUG_MAP = {
   PHP: 'philippines',
   INR: 'india',
@@ -20,10 +19,24 @@ const COUNTRY_SLUG_MAP = {
 
 export async function scrapeTapTapSend(fromCur, toCur) {
   const slug = COUNTRY_SLUG_MAP[toCur];
-  // Try corridor-specific URL first, fall back to homepage
   const url = slug
     ? `https://www.taptapsend.com/en/send-money/canada-to-${slug}`
     : 'https://www.taptapsend.com/en';
+
+  // Try browser scraping (works locally with playwright installed; skipped on Netlify)
+  const browserResult = await tryPlaywrightScrape(url, fromCur, toCur);
+  if (browserResult) return browserResult;
+
+  return fallbackFromER(fromCur, toCur, 0.99);
+}
+
+async function tryPlaywrightScrape(url, fromCur, toCur) {
+  let chromium;
+  try {
+    ({ chromium } = await import('playwright'));
+  } catch {
+    return null; // playwright not available on Netlify — skip silently
+  }
 
   let browser;
   let capturedRate = null;
@@ -39,7 +52,6 @@ export async function scrapeTapTapSend(fromCur, toCur) {
     });
     const page = await context.newPage();
 
-    // Capture any JSON response containing rate data
     page.on('response', async (response) => {
       const ct = response.headers()['content-type'] || '';
       if (!ct.includes('json')) return;
@@ -62,12 +74,11 @@ export async function scrapeTapTapSend(fromCur, toCur) {
     if (rate) return { rate, fee: 0, currencyPair: `${fromCur}/${toCur}`, sourceUrl: url };
 
   } catch (err) {
-    console.error('TapTap Send scraper error:', err.message);
+    console.error('TapTap playwright error:', err.message);
   } finally {
     if (browser) await browser.close();
   }
-
-  return fallbackFromER(fromCur, toCur, 0.99);
+  return null;
 }
 
 function isValidRate(n) {
@@ -100,15 +111,10 @@ function extractRateFromJSON(body, fromCur, toCur) {
 
 function parseRateFromText(text, fromCur, toCur) {
   const patterns = [
-    // "1 CAD = 43.50 PHP"
     new RegExp(`1\\s*${fromCur}\\s*=\\s*([0-9][0-9.,]*)\\s*${toCur}`, 'i'),
-    // "43.50 PHP = 1 CAD"
     new RegExp(`([0-9][0-9.,]*)\\s*${toCur}\\s*=\\s*1\\s*${fromCur}`, 'i'),
-    // "Today's rate: CAD 1 = 43.50 PHP"
     new RegExp(`[Tt]oday['s]*\\s*[Rr]ate[:\\s]*${fromCur}\\s*1\\s*=\\s*([0-9][0-9.,]*)\\s*${toCur}`, 'i'),
-    // "Today's rate 43.50"
     new RegExp(`[Tt]oday['s]*\\s*[Rr]ate[:\\s]+([0-9][0-9.,]*)`, 'i'),
-    // "CAD 1 = 43.50 PHP"
     new RegExp(`${fromCur}\\s*1\\s*=\\s*([0-9][0-9.,]*)\\s*${toCur}`, 'i'),
   ];
   for (const p of patterns) {

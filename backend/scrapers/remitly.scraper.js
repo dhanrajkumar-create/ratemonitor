@@ -1,8 +1,23 @@
-import { chromium } from 'playwright';
+// No top-level playwright import — dynamic import only, so Netlify can bundle this file
 
 export async function scrapeRemitly(fromCur, toCur) {
-  // Remitly currency converter URL pattern: /ca/en/currency-converter/cad-to-inr-rate
   const url = `https://www.remitly.com/ca/en/currency-converter/${fromCur.toLowerCase()}-to-${toCur.toLowerCase()}-rate`;
+
+  // Try browser scraping (works locally with playwright installed; skipped on Netlify)
+  const browserResult = await tryPlaywrightScrape(url, fromCur, toCur);
+  if (browserResult) return browserResult;
+
+  return fallbackFromER(fromCur, toCur, 0.997);
+}
+
+async function tryPlaywrightScrape(url, fromCur, toCur) {
+  let chromium;
+  try {
+    ({ chromium } = await import('playwright'));
+  } catch {
+    return null; // playwright not available on Netlify — skip silently
+  }
+
   let browser;
   let capturedRate = null;
 
@@ -17,13 +32,12 @@ export async function scrapeRemitly(fromCur, toCur) {
     });
     const page = await context.newPage();
 
-    // Capture JSON API responses containing exchange rate data
     page.on('response', async (response) => {
       const ct = response.headers()['content-type'] || '';
       if (!ct.includes('json')) return;
       try {
         const body = await response.json();
-        const rate = extractRateFromJSON(body, fromCur, toCur);
+        const rate = extractRateFromJSON(body, toCur);
         if (rate) capturedRate = rate;
       } catch {}
     });
@@ -40,12 +54,11 @@ export async function scrapeRemitly(fromCur, toCur) {
     if (rate) return { rate, fee: 0, currencyPair: `${fromCur}/${toCur}`, sourceUrl: url };
 
   } catch (err) {
-    console.error('Remitly scraper error:', err.message);
+    console.error('Remitly playwright error:', err.message);
   } finally {
     if (browser) await browser.close();
   }
-
-  return fallbackFromER(fromCur, toCur, 0.997);
+  return null;
 }
 
 function isValidRate(n) {
@@ -78,15 +91,10 @@ function extractRateFromJSON(body, fromCur, toCur) {
 
 function parseRateFromText(text, fromCur, toCur) {
   const patterns = [
-    // "1 CAD = 43.50 PHP"
     new RegExp(`1\\s*${fromCur}\\s*=\\s*([0-9][0-9.,]*)\\s*${toCur}`, 'i'),
-    // "43.50 PHP = 1 CAD"
     new RegExp(`([0-9][0-9.,]*)\\s*${toCur}\\s*=\\s*1\\s*${fromCur}`, 'i'),
-    // "43.50 PHP to 1 CAD"
     new RegExp(`([0-9][0-9.,]*)\\s*${toCur}\\s*to\\s*1\\s*${fromCur}`, 'i'),
-    // "43.50 PHP per CAD"
     new RegExp(`([0-9][0-9.,]*)\\s*${toCur}\\s*per\\s*(?:1\\s*)?${fromCur}`, 'i'),
-    // "Exchange rate: 43.50" or "Today's rate: 43.50"
     new RegExp(`(?:Exchange|Today['s]*)\\s*[Rr]ate[:\\s]+([0-9][0-9.,]*)`, 'i'),
   ];
   for (const p of patterns) {

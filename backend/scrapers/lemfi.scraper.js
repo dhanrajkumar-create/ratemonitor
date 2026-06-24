@@ -1,6 +1,4 @@
-import { chromium } from 'playwright';
-
-// LemFi destination country URL slugs
+// No top-level playwright import — dynamic import only, so Netlify can bundle this file
 const COUNTRY_MAP = {
   INR: 'india',
   PHP: 'philippines',
@@ -22,6 +20,22 @@ export async function scrapeLemFi(fromCur, toCur) {
   if (!country) return fallbackFromER(fromCur, toCur, 0.995);
 
   const url = `https://lemfi.com/en-ca/international-money-transfer/${country}?amount=100&amountType=sending`;
+
+  // Try browser scraping (works locally with playwright installed; skipped on Netlify)
+  const browserResult = await tryPlaywrightScrape(url, fromCur, toCur);
+  if (browserResult) return browserResult;
+
+  return fallbackFromER(fromCur, toCur, 0.995);
+}
+
+async function tryPlaywrightScrape(url, fromCur, toCur) {
+  let chromium;
+  try {
+    ({ chromium } = await import('playwright'));
+  } catch {
+    return null; // playwright not available on Netlify — skip silently
+  }
+
   let browser;
   let capturedRate = null;
 
@@ -36,7 +50,6 @@ export async function scrapeLemFi(fromCur, toCur) {
     });
     const page = await context.newPage();
 
-    // Capture any JSON response that contains exchange rate data
     page.on('response', async (response) => {
       const ct = response.headers()['content-type'] || '';
       if (!ct.includes('json')) return;
@@ -59,16 +72,14 @@ export async function scrapeLemFi(fromCur, toCur) {
     if (rate) return { rate, fee: 0, currencyPair: `${fromCur}/${toCur}`, sourceUrl: url };
 
   } catch (err) {
-    console.error('LemFi scraper error:', err.message);
+    console.error('LemFi playwright error:', err.message);
   } finally {
     if (browser) await browser.close();
   }
-
-  return fallbackFromER(fromCur, toCur, 0.995);
+  return null;
 }
 
 function isValidRate(n) {
-  // Exchange rates must be between 0.000001 and 1,000,000 — filters out IDs, timestamps, etc.
   return !isNaN(n) && n > 0.000001 && n < 1_000_000;
 }
 
