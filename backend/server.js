@@ -1,33 +1,22 @@
+import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
-import competitorsRoutes from './routes/competitors.routes.js';
+import ratesRoutes from './routes/rates.routes.js';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-// Enable CORS for all origins in production, or specify your Vercel URL
-app.use(cors({
-  origin: '*' // In production, you might want to lock this down to your Vercel domain
-}));
-
+app.use(cors({ origin: '*' }));
 app.use(express.json());
 
-// Routes
-app.use('/api/competitors', competitorsRoutes);
+// Primary API — provider rates with VS Remitbee comparison
+app.use('/api/rates', ratesRoutes);
 
 // Export for Netlify serverless functions
 export default app;
 
 if (process.env.NODE_ENV !== 'production' && !process.env.NETLIFY) {
-  const server = app.listen(PORT, () => {
-    console.log(`Scraper backend running on port ${PORT}`);
-  });
-
-  server.on('error', (err) => {
-    console.error('Server error:', err);
-  });
+  app.listen(PORT, () => console.log(`Rate Monitor backend running on port ${PORT}`));
 }
 
-process.on('uncaughtException', (err) => {
-  console.error('Uncaught exception:', err);
-});
+process.on('uncaughtException', err => console.error('Uncaught exception:', err));

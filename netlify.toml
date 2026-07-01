@@ -8,7 +8,7 @@
   external_node_modules = ["playwright", "playwright-core"]
 
 [[redirects]]
-  from = "/api/*"
+  from = "/api/rates*"
   to = "/.netlify/functions/api/:splat"
   status = 200
 
