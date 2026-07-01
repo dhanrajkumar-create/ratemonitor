@@ -1,19 +1,21 @@
-import { getLatestRates, getRemitbeeRates } from '../models/rateModel.js';
+import { getLatestRates, getRemitbeeRates, saveRates, saveLog } from '../models/rateModel.js';
 import { scrapeRemitbee }   from '../playwright/remitbee.js';
 import { scrapeRemitly }    from '../playwright/remitly.js';
 import { scrapeTapTapSend } from '../playwright/taptapsend.js';
 import { scrapeLemFi }      from '../playwright/lemfi.js';
 import { scrapeInstarem }   from '../playwright/instarem.js';
-import { scrapeMoneyGram }  from '../playwright/moneygram.js';
+import { scrapeMoneyGram }    from '../playwright/moneygram.js';
+import { scrapeKabayanRemit } from '../playwright/kabayanremit.js';
 
 const TO_CURRENCIES = ['INR', 'PHP', 'LKR', 'UAH', 'NPR', 'BDT', 'PKR'];
 const PROVIDERS = [
-  { name: 'Remitbee',    fn: scrapeRemitbee   },
-  { name: 'Remitly',     fn: scrapeRemitly    },
-  { name: 'TapTap Send', fn: scrapeTapTapSend },
-  { name: 'LemFi',       fn: scrapeLemFi      },
-  { name: 'Instarem',    fn: scrapeInstarem   },
-  { name: 'MoneyGram',   fn: scrapeMoneyGram  },
+  { name: 'Remitbee',      fn: scrapeRemitbee    },
+  { name: 'Remitly',       fn: scrapeRemitly     },
+  { name: 'TapTap Send',   fn: scrapeTapTapSend  },
+  { name: 'LemFi',         fn: scrapeLemFi       },
+  { name: 'Instarem',      fn: scrapeInstarem    },
+  { name: 'MoneyGram',     fn: scrapeMoneyGram   },
+  { name: 'Kabayan Remit', fn: scrapeKabayanRemit },
 ];
 
 // Per-currency in-memory cache (5 min) — keyed by currency code or 'all'
@@ -79,6 +81,26 @@ export async function getRates(req, res) {
 
     const result = attachVsRemitbee(rows, remitbeeMap);
     memCache[cacheKey] = { data: result, ts: now };
+
+    // Persist live-scraped data to MySQL in background (don't block the response)
+    Promise.allSettled(
+      PROVIDERS.map(p => {
+        const providerRows = rows.filter(r => r.provider === p.name);
+        if (providerRows.length === 0) return Promise.resolve();
+        const rates = providerRows.map(r => ({
+          fromCurrency:    r.from_currency,
+          toCurrency:      r.to_currency,
+          exchangeRate:    r.exchange_rate,
+          promotionalRate: r.promotional_rate,
+          fee:             r.fee,
+          deliveryTime:    r.delivery_time,
+          transferType:    r.transfer_type,
+        }));
+        return saveRates(p.name, rates)
+          .then(() => saveLog(p.name, 'success', `Live: saved ${rates.length} rates`))
+          .catch(() => {}); // silently skip if DB not configured
+      })
+    ).catch(() => {});
 
     return res.json({ success: true, source: 'live', data: result });
   } catch (err) {

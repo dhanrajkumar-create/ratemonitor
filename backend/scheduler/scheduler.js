@@ -7,7 +7,8 @@ import { scrapeRemitly }   from '../playwright/remitly.js';
 import { scrapeTapTapSend } from '../playwright/taptapsend.js';
 import { scrapeLemFi }     from '../playwright/lemfi.js';
 import { scrapeInstarem }  from '../playwright/instarem.js';
-import { scrapeMoneyGram } from '../playwright/moneygram.js';
+import { scrapeMoneyGram }    from '../playwright/moneygram.js';
+import { scrapeKabayanRemit } from '../playwright/kabayanremit.js';
 import { saveRates, saveLog } from '../models/rateModel.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -18,12 +19,13 @@ const FROM_CUR     = 'CAD';
 const TO_CURRENCIES = ['INR', 'PHP', 'LKR', 'UAH', 'NPR', 'BDT', 'PKR'];
 
 const PROVIDERS = [
-  { name: 'Remitbee',    fn: scrapeRemitbee   },
-  { name: 'Remitly',     fn: scrapeRemitly    },
-  { name: 'TapTap Send', fn: scrapeTapTapSend },
-  { name: 'LemFi',       fn: scrapeLemFi      },
-  { name: 'Instarem',    fn: scrapeInstarem   },
-  { name: 'MoneyGram',   fn: scrapeMoneyGram  },
+  { name: 'Remitbee',      fn: scrapeRemitbee    },
+  { name: 'Remitly',       fn: scrapeRemitly     },
+  { name: 'TapTap Send',   fn: scrapeTapTapSend  },
+  { name: 'LemFi',         fn: scrapeLemFi       },
+  { name: 'Instarem',      fn: scrapeInstarem    },
+  { name: 'MoneyGram',     fn: scrapeMoneyGram   },
+  { name: 'Kabayan Remit', fn: scrapeKabayanRemit },
 ];
 
 const MAX_RETRIES  = 3;

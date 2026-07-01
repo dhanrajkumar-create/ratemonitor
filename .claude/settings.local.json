@@ -2,7 +2,10 @@
   "permissions": {
     "allow": [
       "PowerShell(Get-ChildItem -Path \"C:\\\\Users\\\\HP\\\\Desktop\\\\ratemonitor-main\" -Recurse -Force | Where-Object {$_.PSIsContainer} | Select-Object -ExpandProperty FullName | Sort-Object)",
-      "PowerShell(netstat -ano)"
+      "PowerShell(netstat -ano)",
+      "PowerShell(\"done\")",
+      "WebFetch(domain:kabayanremit.com)",
+      "WebFetch(domain:app.kabayanremit.com)"
     ]
   }
 }
