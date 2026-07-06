@@ -5,7 +5,9 @@
       "PowerShell(netstat -ano)",
       "PowerShell(\"done\")",
       "WebFetch(domain:kabayanremit.com)",
-      "WebFetch(domain:app.kabayanremit.com)"
+      "WebFetch(domain:app.kabayanremit.com)",
+      "Skill(artifact-design)",
+      "Skill(artifact-design:*)"
     ]
   }
 }
