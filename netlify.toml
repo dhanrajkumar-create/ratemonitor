@@ -4,7 +4,7 @@
   functions = "backend/functions"
 
 [build.environment]
-  NODE_VERSION = "20"
+  NODE_VERSION = "22"
   # Skip playwright/puppeteer's own Chromium download — we use @sparticuz/chromium instead
   PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD = "1"
   PUPPETEER_SKIP_DOWNLOAD = "1"
