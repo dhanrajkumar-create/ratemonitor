@@ -1,5 +1,3 @@
-import { chromium } from 'playwright';
-
 // Kabayan Remit only supports CAD→PHP from Canada
 const SUPPORTED = ['PHP'];
 
@@ -7,6 +5,15 @@ export async function scrapeKabayanRemit(fromCur = 'CAD', toCurrencies = SUPPORT
   // Only PHP is supported from CAD — skip immediately for any other request
   const targets = toCurrencies.filter(c => SUPPORTED.includes(c));
   if (targets.length === 0) return [];
+
+  // Dynamic import — fails gracefully on Netlify/Lambda where no browser binary exists
+  let chromium;
+  try {
+    ({ chromium } = await import('playwright'));
+  } catch {
+    console.log('[KabayanRemit] playwright not available, skipping');
+    return [];
+  }
 
   let browser;
   try {

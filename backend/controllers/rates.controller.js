@@ -1,14 +1,19 @@
 import { getLatestRates, getRemitbeeRates, saveRates, saveLog } from '../models/rateModel.js';
-import { scrapeRemitbee }   from '../playwright/remitbee.js';
-import { scrapeRemitly }    from '../playwright/remitly.js';
-import { scrapeTapTapSend } from '../playwright/taptapsend.js';
-import { scrapeLemFi }      from '../playwright/lemfi.js';
-import { scrapeInstarem }   from '../playwright/instarem.js';
-import { scrapeMoneyGram }    from '../playwright/moneygram.js';
+import { scrapeRemitbee }    from '../playwright/remitbee.js';
+import { scrapeRemitly }     from '../playwright/remitly.js';
+import { scrapeTapTapSend }  from '../playwright/taptapsend.js';
+import { scrapeLemFi }       from '../playwright/lemfi.js';
+import { scrapeInstarem }    from '../playwright/instarem.js';
+import { scrapeMoneyGram }   from '../playwright/moneygram.js';
 import { scrapeKabayanRemit } from '../playwright/kabayanremit.js';
 
 const TO_CURRENCIES = ['INR', 'PHP', 'LKR', 'UAH', 'NPR', 'BDT', 'PKR'];
-const PROVIDERS = [
+
+// On Netlify Lambda: no headless browser — use fetch-based scrapers only (fast, no binary needed)
+// Locally / on a VPS: all 7 providers including Playwright scrapers
+const IS_NETLIFY = !!(process.env.NETLIFY || process.env.NETLIFY_REGION);
+
+const ALL_PROVIDERS = [
   { name: 'Remitbee',      fn: scrapeRemitbee    },
   { name: 'Remitly',       fn: scrapeRemitly     },
   { name: 'TapTap Send',   fn: scrapeTapTapSend  },
@@ -18,35 +23,44 @@ const PROVIDERS = [
   { name: 'Kabayan Remit', fn: scrapeKabayanRemit },
 ];
 
+const NETLIFY_PROVIDERS = [
+  { name: 'Remitbee',  fn: scrapeRemitbee  },
+  { name: 'Remitly',   fn: scrapeRemitly   },
+  { name: 'Instarem',  fn: scrapeInstarem  },
+];
+
+const PROVIDERS      = IS_NETLIFY ? NETLIFY_PROVIDERS : ALL_PROVIDERS;
+const SCRAPE_TIMEOUT = IS_NETLIFY ? 9000 : 45000;  // tight on Netlify free (10s limit)
+
 // Per-currency in-memory cache (5 min) — keyed by currency code or 'all'
 const memCache = {};
 
 export async function getRates(req, res) {
   const toCurrency = req.query.to || null;
-  const cacheKey = toCurrency || 'all';
+  const cacheKey   = toCurrency || 'all';
 
   try {
-    // ── Try MySQL ──────────────────────────────────────────────────────────
+    // ── Try MySQL first ─────────────────────────────────────────────────────
     const rows = await getLatestRates(toCurrency);
     if (rows.length > 0) {
       const remitbeeMap = await getRemitbeeRates();
       return res.json({ success: true, source: 'db', data: attachVsRemitbee(rows, remitbeeMap) });
     }
   } catch {
-    // MySQL not configured — fall through to live scraping
+    // No DB configured (Netlify) — fall through to live scraping
   }
 
-  // ── Live scraping fallback (Netlify / no DB) ────────────────────────────
-  const now = Date.now();
+  // ── In-memory cache ─────────────────────────────────────────────────────
+  const now    = Date.now();
   const cached = memCache[cacheKey];
   if (cached && now - cached.ts < 5 * 60 * 1000) {
     return res.json({ success: true, source: 'cache', data: cached.data });
   }
 
+  // ── Live scraping ────────────────────────────────────────────────────────
   try {
     const currencies = toCurrency ? [toCurrency] : TO_CURRENCIES;
 
-    // Each provider gets 45 seconds max — prevents one slow/hung provider from blocking all
     const withTimeout = (promise, ms) => Promise.race([
       promise,
       new Promise(resolve => setTimeout(() => resolve([]), ms)),
@@ -56,7 +70,7 @@ export async function getRates(req, res) {
       PROVIDERS.map(p =>
         withTimeout(
           p.fn('CAD', currencies).then(rates => rates.map(r => ({ ...r, provider: p.name }))),
-          45000
+          SCRAPE_TIMEOUT
         )
       )
     );
@@ -82,7 +96,7 @@ export async function getRates(req, res) {
     const result = attachVsRemitbee(rows, remitbeeMap);
     memCache[cacheKey] = { data: result, ts: now };
 
-    // Persist live-scraped data to MySQL in background (don't block the response)
+    // Persist to MySQL in background — fire-and-forget, never blocks the response
     Promise.allSettled(
       PROVIDERS.map(p => {
         const providerRows = rows.filter(r => r.provider === p.name);
@@ -98,7 +112,7 @@ export async function getRates(req, res) {
         }));
         return saveRates(p.name, rates)
           .then(() => saveLog(p.name, 'success', `Live: saved ${rates.length} rates`))
-          .catch(() => {}); // silently skip if DB not configured
+          .catch(() => {});
       })
     ).catch(() => {});
 

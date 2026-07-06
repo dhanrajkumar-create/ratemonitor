@@ -4,8 +4,9 @@ import app from '../server.js';
 const baseHandler = serverless(app);
 
 export const handler = async (event, context) => {
-  // Netlify may strip "/api" from the path before invoking the function.
-  // Express routes are mounted at /api/*, so we add it back when missing.
+  // Netlify strips the function name — event.path is the original request path (/api/...).
+  // Express mounts routes at /api/*, so no rewriting needed; just pass through.
+  // Guard: if path somehow arrives without /api prefix, add it.
   if (event.path && !event.path.startsWith('/api')) {
     event.path = '/api' + (event.path.startsWith('/') ? event.path : '/' + event.path);
   }
