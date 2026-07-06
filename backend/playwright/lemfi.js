@@ -6,6 +6,8 @@
 // Currencies run in PARALLEL (each currency gets its own page in the same browser context)
 // so total time ≈ slowest single currency (~15s) instead of 7 × 15s = 105s.
 
+import { launchBrowser } from './browser.js';
+
 const SUPPORTED = ['INR', 'PHP', 'LKR', 'UAH', 'NPR', 'BDT', 'PKR'];
 
 const COUNTRY_MAP = {
@@ -21,7 +23,6 @@ async function scrapeCurrency(ctx, fromCur, toCur) {
   const page = await ctx.newPage();
   let networkFee = null;
 
-  // Capture fee from the exchange API — transaction_fee IS accurate (rate field is NOT)
   const feeCapture = page.waitForResponse(
     r => r.url().includes('/api/lemonade/v2/exchange'),
     { timeout: 20000 }
@@ -36,36 +37,29 @@ async function scrapeCurrency(ctx, fromCur, toCur) {
   try {
     await page.goto(
       `https://lemfi.com/en-ca/international-money-transfer/${country}?amount=100&amountType=sending`,
-      { waitUntil: 'domcontentloaded', timeout: 35000 }
+      { waitUntil: 'domcontentloaded', timeout: 20000 }
     );
 
-    // Wait until an actual rate number appears after "1 CAD = " in the DOM
-    // The page briefly shows "1 CAD = " (loading), then fills in the rate number
     await page.waitForFunction(
       () => /1\s+CAD\s*=\s*[\d.]{4,}/.test(document.body.innerText),
-      { timeout: 25000 }
+      { timeout: 18000 }
     ).catch(() => {});
 
-    // Allow the fee API to complete
     await Promise.race([feeCapture, page.waitForTimeout(2000)]);
 
-    // Scrape the exchange rate from the rendered page
     const pageData = await page.evaluate((toCur) => {
       const text = document.body.innerText;
 
-      // Primary pattern: "1 CAD = 66.45 INR"
       let rate = null;
       const p1 = new RegExp(`1\\s+CAD\\s*=\\s*([\\d.,]+)\\s+${toCur}`, 'i');
       const m1 = text.match(p1);
       if (m1) rate = parseFloat(m1[1].replace(',', ''));
 
-      // Pattern 2: "1 CAD = 66.45" (no currency suffix)
       if (!rate) {
         const m2 = text.match(/1\s+CAD\s*=\s*([\d.,]+)/i);
         if (m2) rate = parseFloat(m2[1].replace(',', ''));
       }
 
-      // Pattern 3: recipient gets X {CUR} for 100 CAD → rate = X / 100
       if (!rate) {
         const p3 = new RegExp(`([\\d,]+\\.\\d+)\\s*${toCur}`, 'gi');
         const matches = [...text.matchAll(p3)];
@@ -75,7 +69,6 @@ async function scrapeCurrency(ctx, fromCur, toCur) {
         }
       }
 
-      // Fee from page text
       let fee = null;
       const feePatterns = [
         /transfer\s+fees?\s*[\n\r]+\$?([\d.]+)/i,
@@ -112,21 +105,20 @@ async function scrapeCurrency(ctx, fromCur, toCur) {
     console.error(`[LemFi] ${toCur}:`, e.message?.slice(0, 80));
     return null;
   } finally {
-    await page.close();
+    await page.close().catch(() => {});
   }
 }
 
 export async function scrapeLemFi(fromCur = 'CAD', toCurrencies = SUPPORTED) {
-  let chromium;
-  try { ({ chromium } = await import('playwright')); } catch { return []; }
-
   let browser;
   try {
-    browser = await chromium.launch({
-      headless: true,
-      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-blink-features=AutomationControlled'],
-    });
+    browser = await launchBrowser();
+  } catch (e) {
+    console.error('[LemFi] browser launch failed:', e.message);
+    return [];
+  }
 
+  try {
     const ctx = await browser.newContext({
       userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
       viewport: { width: 1280, height: 800 },
@@ -138,13 +130,12 @@ export async function scrapeLemFi(fromCur = 'CAD', toCurrencies = SUPPORTED) {
       Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
     });
 
-    // Run all currencies in parallel — total time ≈ slowest single page (~15s)
     const results = await Promise.all(
       toCurrencies.map(toCur => scrapeCurrency(ctx, fromCur, toCur))
     );
 
     return results.filter(Boolean);
   } finally {
-    if (browser) await browser.close();
+    await browser.close().catch(() => {});
   }
 }

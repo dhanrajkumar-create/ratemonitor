@@ -3,6 +3,8 @@
 // Response: { status: true, data: { INR: 66.47, PHP: 43.15, ... } }
 // Fallback: Playwright loads /en/currency-conversion/cad-to-inr/ and scrapes the rate text
 
+import { launchBrowser } from './browser.js';
+
 const SUPPORTED = ['INR', 'PHP', 'LKR', 'UAH', 'NPR', 'BDT', 'PKR'];
 
 export async function scrapeInstarem(fromCur = 'CAD', toCurrencies = SUPPORTED) {
@@ -48,17 +50,17 @@ export async function scrapeInstarem(fromCur = 'CAD', toCurrencies = SUPPORTED) 
   }
 
   // ── Fallback: Playwright DOM scraping ──────────────────────────────────
-  let chromium;
-  try { ({ chromium } = await import('playwright')); } catch { return []; }
-
   let browser;
+  try {
+    browser = await launchBrowser();
+  } catch (e) {
+    console.error('[Instarem] browser launch failed:', e.message);
+    return [];
+  }
+
   const results = [];
 
   try {
-    browser = await chromium.launch({
-      headless: true,
-      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-blink-features=AutomationControlled'],
-    });
 
     const ctx = await browser.newContext({
       userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
@@ -136,7 +138,7 @@ export async function scrapeInstarem(fromCur = 'CAD', toCurrencies = SUPPORTED) 
       }
     }
   } finally {
-    if (browser) await browser.close();
+    await browser.close().catch(() => {});
   }
 
   return results;

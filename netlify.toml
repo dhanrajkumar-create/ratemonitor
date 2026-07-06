@@ -5,18 +5,26 @@
 
 [build.environment]
   NODE_VERSION = "20"
+  # Skip playwright/puppeteer's own Chromium download — we use @sparticuz/chromium instead
   PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD = "1"
   PUPPETEER_SKIP_DOWNLOAD = "1"
 
 [functions]
   node_bundler = "esbuild"
+  # These packages contain native binaries or large assets — exclude from esbuild bundle
+  # Netlify deploys them as-is from node_modules at runtime
   external_node_modules = [
+    "@sparticuz/chromium",
     "playwright",
     "playwright-core",
     "playwright-extra",
     "puppeteer-extra-plugin-stealth",
     "mysql2"
   ]
+
+# Bump timeout to 26s (maximum on Netlify Pro, 10s on free tier)
+[functions."api"]
+  timeout = 26
 
 # All /api/* requests → serverless function
 [[redirects]]

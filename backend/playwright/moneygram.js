@@ -5,18 +5,13 @@
 // headless browser is indistinguishable from a real Chrome user.
 //
 // Strategy:
-//   1. Launch stealth Chromium
+//   1. Launch stealth Chromium (works on Lambda via @sparticuz/chromium + stealth plugin)
 //   2. Load the INR currency-converter page (establishes DataDome session)
 //   3. Capture the automatic fee-quote response for INR (confirms session is live)
 //   4. Use page.evaluate() to fetch all other currencies via in-page fetch
 //      (same DataDome session cookie — no extra page loads needed)
-//
-// API: GET /api/send-money/fee-quote/v2
-//        ?senderCountryCode=CAN&senderCurrencyCode=CAD&receiverCountryCode={3-letter}&sendAmount=100.00
-// Response: { feeQuotesByCurrency: { INR: { fxRate, sendFee, promo: { fxRate } } } }
 
-import { createRequire } from 'module';
-const require = createRequire(import.meta.url);
+import { launchBrowser } from './browser.js';
 
 const SUPPORTED = ['INR', 'PHP', 'LKR', 'UAH', 'NPR', 'BDT', 'PKR'];
 
@@ -26,29 +21,17 @@ const COUNTRY_CODE = {
 };
 
 export async function scrapeMoneyGram(fromCur = 'CAD', toCurrencies = SUPPORTED) {
-  let chromium, StealthPlugin;
+  let browser;
   try {
-    ({ chromium } = require('playwright-extra'));
-    StealthPlugin = require('puppeteer-extra-plugin-stealth');
-    chromium.use(StealthPlugin());
+    browser = await launchBrowser({ stealth: true });
   } catch (e) {
-    console.error('[MoneyGram] playwright-extra or stealth plugin not found:', e.message);
+    console.error('[MoneyGram] browser launch failed:', e.message);
     return [];
   }
 
-  let browser;
   const results = [];
 
   try {
-    browser = await chromium.launch({
-      headless: true,
-      args: [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage',
-      ],
-    });
-
     const ctx = await browser.newContext({
       userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
       viewport: { width: 1440, height: 900 },
@@ -58,18 +41,14 @@ export async function scrapeMoneyGram(fromCur = 'CAD', toCurrencies = SUPPORTED)
 
     const page = await ctx.newPage();
 
-    // Track whether DataDome allowed or blocked the automatic INR fee-quote
     let sessionAllowed = false;
     let sessionBlocked = false;
 
     page.on('response', async (r) => {
       if (!r.url().includes('fee-quote/v2')) return;
       const ct = r.headers()['content-type'] || '';
-      if (ct.includes('javascript')) return; // Cloudflare JS challenge — skip
-
-      // HTML response = "You have been blocked" page → IP ban
+      if (ct.includes('javascript')) return;
       if (ct.includes('html')) { sessionBlocked = true; return; }
-
       if (r.status() === 200 && ct.includes('json')) {
         try {
           const body = await r.json();
@@ -77,18 +56,17 @@ export async function scrapeMoneyGram(fromCur = 'CAD', toCurrencies = SUPPORTED)
           if (body?.feeQuotesByCurrency) sessionAllowed = true;
         } catch {}
       } else {
-        sessionBlocked = true; // 403 captcha JSON or other error
+        sessionBlocked = true;
       }
     });
 
     try {
       await page.goto(
         'https://www.moneygram.com/ca/en/currency-converter/cad-to-inr',
-        { waitUntil: 'domcontentloaded', timeout: 45000 }
+        { waitUntil: 'domcontentloaded', timeout: 20000 }
       );
 
-      // Wait up to 20s for the automatic fee-quote to arrive
-      const deadline = Date.now() + 20000;
+      const deadline = Date.now() + 15000;
       while (!sessionAllowed && !sessionBlocked && Date.now() < deadline) {
         await page.waitForTimeout(300);
       }
@@ -104,15 +82,12 @@ export async function scrapeMoneyGram(fromCur = 'CAD', toCurrencies = SUPPORTED)
         console.log('[MoneyGram] Session established — fetching all currencies');
       }
 
-      // Small pause to ensure DataDome session cookie is fully set
       await page.waitForTimeout(1000);
 
-      // Build target list
       const targets = toCurrencies
         .map(cur => ({ cur, code: COUNTRY_CODE[cur] }))
         .filter(({ code }) => !!code);
 
-      // Fetch all currencies via in-page fetch — reuses the DataDome session cookie
       const allData = await page.evaluate(async (targets) => {
         const results = await Promise.all(targets.map(async ({ cur, code }) => {
           try {
@@ -135,10 +110,7 @@ export async function scrapeMoneyGram(fromCur = 'CAD', toCurrencies = SUPPORTED)
       }, targets);
 
       for (const d of allData) {
-        if (d.err) {
-          console.warn(`[MoneyGram] ${d.cur}: ${d.err}`);
-          continue;
-        }
+        if (d.err) { console.warn(`[MoneyGram] ${d.cur}: ${d.err}`); continue; }
         const fxRate    = parseFloat(d.fxRate);
         const sendFee   = parseFloat(d.sendFee ?? 0);
         const promoRate = d.promo
@@ -160,7 +132,7 @@ export async function scrapeMoneyGram(fromCur = 'CAD', toCurrencies = SUPPORTED)
       }
 
       if (results.length === 0) {
-        console.warn('[MoneyGram] No valid rates returned (DataDome may still be blocking)');
+        console.warn('[MoneyGram] No valid rates (DataDome may still be blocking)');
       }
     } catch (e) {
       console.error('[MoneyGram]', e.message?.slice(0, 100));
@@ -169,7 +141,7 @@ export async function scrapeMoneyGram(fromCur = 'CAD', toCurrencies = SUPPORTED)
       await ctx.close().catch(() => {});
     }
   } finally {
-    if (browser) await browser.close();
+    await browser.close().catch(() => {});
   }
   return results;
 }

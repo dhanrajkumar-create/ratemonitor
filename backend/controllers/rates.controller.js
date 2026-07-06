@@ -29,8 +29,8 @@ const NETLIFY_PROVIDERS = [
   { name: 'Instarem',  fn: scrapeInstarem  },
 ];
 
-const PROVIDERS      = IS_NETLIFY ? NETLIFY_PROVIDERS : ALL_PROVIDERS;
-const SCRAPE_TIMEOUT = IS_NETLIFY ? 9000 : 45000;  // tight on Netlify free (10s limit)
+const PROVIDERS      = ALL_PROVIDERS;  // all 7 run everywhere — browser.js handles Lambda binary
+const SCRAPE_TIMEOUT = IS_NETLIFY ? 25000 : 45000; // Netlify Pro = 26s limit
 
 // Per-currency in-memory cache (5 min) — keyed by currency code or 'all'
 const memCache = {};
