@@ -5,14 +5,11 @@
 
 [build.environment]
   NODE_VERSION = "22"
-  # Skip playwright/puppeteer's own Chromium download — we use @sparticuz/chromium instead
   PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD = "1"
   PUPPETEER_SKIP_DOWNLOAD = "1"
 
 [functions]
   node_bundler = "esbuild"
-  # These packages contain native binaries or large assets — exclude from esbuild bundle
-  # Netlify deploys them as-is from node_modules at runtime
   external_node_modules = [
     "@sparticuz/chromium",
     "playwright",
@@ -22,9 +19,16 @@
     "mysql2"
   ]
 
-# Bump timeout to 26s (maximum on Netlify Pro, 10s on free tier)
+# /api/rates — reads from Netlify Blobs instantly (all 7 providers)
+# Falls back to 3 fetch-based providers if Blobs not yet populated
 [functions."api"]
   timeout = 26
+
+# Scheduled background function — scrapes all 7 providers every 30 min
+# Background timeout = 15 minutes (no issue for browser scrapers)
+# Saves results to Netlify Blobs so /api/rates can serve all 7 instantly
+[functions."scrape"]
+  schedule = "*/30 * * * *"
 
 # All /api/* requests → serverless function
 [[redirects]]
